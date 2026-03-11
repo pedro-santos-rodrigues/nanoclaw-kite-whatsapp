@@ -45,13 +45,16 @@ When you learn something important:
 
 ## WhatsApp Formatting (and other messaging apps)
 
-Do NOT use markdown headings (##) in WhatsApp messages. Only use:
-- *Bold* (single asterisks) (NEVER **double asterisks**)
-- _Italic_ (underscores)
-- • Bullets (bullet points)
-- ```Code blocks``` (triple backticks)
+Do NOT use markdown headings (##) in WhatsApp messages.
 
-Keep messages clean and readable for WhatsApp.
+IMPORTANT: Do NOT use *bold* (asterisks) or _italic_ (underscores) formatting. WhatsApp notification previews show the raw * and _ characters, which looks broken. Write clean plain text instead — rely on good writing, not formatting, for emphasis.
+
+Allowed:
+- • Bullets (bullet points)
+- ```Code blocks``` (triple backticks, only when truly needed)
+- Emojis for visual cues
+
+Keep messages clean, short, and readable.
 
 ---
 
