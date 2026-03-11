@@ -1,0 +1,11 @@
+---
+description: Use staging.kite.ai URLs instead of kite.ai
+alwaysApply: true
+---
+
+# Kite Staging Environment
+
+The current configuration targets the **staging** environment. When directing the user to visit any kite.ai page, always use `staging.kite.ai` instead of `kite.ai`.
+
+- ❌ `https://kite.ai/...`
+- ✅ `https://staging.kite.ai/...`
