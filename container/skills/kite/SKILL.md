@@ -8,6 +8,18 @@ allowed-tools: Bash(node /home/node/.claude/skills/kite/*)
 
 Manage all of the user's websites through the Kite API. The helper script at `/home/node/.claude/skills/kite/kite-api.mjs` handles authentication and HTTP calls.
 
+## IMPORTANT: URLs
+
+Always use `staging.kite.ai` for all user-facing links. Never use `kite.ai` directly.
+
+When linking the user to their site in Kite, use this URL format:
+
+```
+https://staging.kite.ai/app-details/{application_id}/design
+```
+
+Replace `{application_id}` with the actual application ID. Use this link whenever the user needs to view or select designs, preview their site, or interact with Kite visually.
+
 ## Authentication
 
 The Kite session cookie is already configured at `/workspace/group/kite-config.json`. Do NOT ask the user for a cookie — just call the API directly. Only if the helper script exits with an error containing "401" or "Unauthorized" should you tell the user their session has expired and ask for a fresh cookie to save with:
@@ -57,9 +69,9 @@ When you need to know the user's sites (first interaction, or when asked), call 
 When the user wants to change something on their site:
 
 1. **Immediately** send a brief acknowledgement via `mcp__nanoclaw__send_message` so the user knows you're on it (e.g. "Let me check with Kite..." or "Sending that to Kite..."). Keep it honest — don't say "creating" or "done" before the orchestrator has responded.
-2. Record the current timestamp.
+2. Record the current timestamp **right before** calling send-message (not after — the orchestrator may reply fast).
 3. Call `send-message` with the user's instruction forwarded as `user_message`.
-4. Call `poll-response` with the thread_id and the timestamp from step 2.
+4. **Immediately** call `poll-response` with the thread_id and the timestamp from step 2 — do not do any other work between send-message and poll-response.
 5. Relay the orchestrator's response to the user naturally.
 
 The orchestrator can take 10–60 seconds. The polling helper handles the wait automatically.
@@ -76,9 +88,17 @@ When the user says something like "create a new website for my food truck" or "b
 4. Forward the user's full description to the orchestrator via `send-message`.
 5. Poll for the response and relay it.
 6. The orchestrator will ask follow-up questions about the business (name, style, etc.) — relay them naturally and wait for the user's answers before continuing.
-6. When the orchestrator generates design options, it responds with 3 iterations. Present them to the user and ask them to pick 1, 2, or 3.
-7. When the user picks, call `select-iteration` with `iter1`, `iter2`, or `iter3`.
-8. Continue the conversation with the orchestrator for any refinements.
+6. When the orchestrator generates design options (3 iterations), present them with the direct Kite link so the user can preview visually:
+
+   ```
+   Here are 3 design options for your site! You can preview and pick your favorite here:
+   👉 https://staging.kite.ai/app-details/{application_id}/design
+
+   Or just reply with 1, 2, or 3 and I'll select it for you.
+   ```
+
+   Always use the URL format from the "IMPORTANT: URLs" section above. If the user replies with a number in chat, call `select-iteration` with `iter1`, `iter2`, or `iter3`.
+7. Continue the conversation with the orchestrator for any refinements.
 
 ### 5. Publishing
 

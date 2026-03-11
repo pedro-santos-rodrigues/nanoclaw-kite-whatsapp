@@ -106,6 +106,20 @@ async function sendMessage(argsJson) {
   console.log(JSON.stringify(data, null, 2));
 }
 
+function findLatestOrchestratorReply(allMessages) {
+  const lastUserIdx = allMessages.findLastIndex(
+    (m) => m.type === 'conversation-update' && m.role === 'user',
+  );
+  const searchFrom = lastUserIdx >= 0 ? lastUserIdx + 1 : 0;
+  const candidates = allMessages.slice(searchFrom).filter(
+    (m) =>
+      m.type === 'conversation-update' &&
+      m.role !== 'user' &&
+      m.message && m.message.trim(),
+  );
+  return candidates.length > 0 ? candidates[candidates.length - 1] : null;
+}
+
 async function pollResponse(argsJson) {
   const { thread_id, after } = JSON.parse(argsJson);
   if (!thread_id || !after) {
@@ -124,6 +138,7 @@ async function pollResponse(argsJson) {
     const data = await api('GET', `/threads/${thread_id}/messages`);
     const allMessages = Array.isArray(data) ? data : (data.messages || []);
 
+    // Primary: strict timestamp filter
     const candidates = allMessages.filter(
       (m) =>
         m.type === 'conversation-update' &&
@@ -136,6 +151,23 @@ async function pollResponse(argsJson) {
       const latest = candidates[candidates.length - 1];
       console.log(JSON.stringify(latest, null, 2));
       return;
+    }
+
+    // Fallback: if a user_action_required or iteration_complete exists after our
+    // timestamp, the orchestrator already finished but the conversation-update
+    // may have landed before our `after` due to clock skew / agent delay.
+    // Return the latest orchestrator reply after the last user message instead.
+    const hasDesignReady = allMessages.some(
+      (m) =>
+        (m.type === 'user_action_required' || m.type === 'iteration_complete') &&
+        new Date(m.created_at) > new Date(afterDate.getTime() - 10 * 60 * 1000),
+    );
+    if (hasDesignReady) {
+      const fallback = findLatestOrchestratorReply(allMessages);
+      if (fallback) {
+        console.log(JSON.stringify(fallback, null, 2));
+        return;
+      }
     }
 
     // Relay in-progress notifications as WhatsApp status updates
