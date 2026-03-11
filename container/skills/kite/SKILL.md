@@ -56,7 +56,7 @@ When you need to know the user's sites (first interaction, or when asked), call 
 
 When the user wants to change something on their site:
 
-1. **Immediately** send "Working on it..." via `mcp__nanoclaw__send_message` so the user knows you're on it.
+1. **Immediately** send a brief acknowledgement via `mcp__nanoclaw__send_message` so the user knows you're on it (e.g. "Let me check with Kite..." or "Sending that to Kite..."). Keep it honest — don't say "creating" or "done" before the orchestrator has responded.
 2. Record the current timestamp.
 3. Call `send-message` with the user's instruction forwarded as `user_message`.
 4. Call `poll-response` with the thread_id and the timestamp from step 2.
@@ -70,11 +70,12 @@ If the orchestrator asks a follow-up question, relay it to the user conversation
 
 When the user says something like "create a new website for my food truck" or "build me a site for...":
 
-1. Call `create-site`. It returns `{application: {id}, thread: {id}}`.
-2. Update CLAUDE.md: set this as the active site, add it to the sites list.
-3. Forward the user's full description to the orchestrator via `send-message`.
-4. Poll for the response and relay it.
-5. The orchestrator may ask follow-up questions about the business — relay them naturally.
+1. **Immediately** send "Setting things up — Kite will have a few questions for you first!" via `mcp__nanoclaw__send_message`.
+2. Call `create-site`. It returns `{application: {id}, thread: {id}}`.
+3. Update CLAUDE.md: set this as the active site, add it to the sites list.
+4. Forward the user's full description to the orchestrator via `send-message`.
+5. Poll for the response and relay it.
+6. The orchestrator will ask follow-up questions about the business (name, style, etc.) — relay them naturally and wait for the user's answers before continuing.
 6. When the orchestrator generates design options, it responds with 3 iterations. Present them to the user and ask them to pick 1, 2, or 3.
 7. When the user picks, call `select-iteration` with `iter1`, `iter2`, or `iter3`.
 8. Continue the conversation with the orchestrator for any refinements.

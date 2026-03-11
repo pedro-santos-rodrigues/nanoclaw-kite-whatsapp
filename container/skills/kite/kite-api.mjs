@@ -13,11 +13,15 @@
  */
 
 import fs from 'fs';
+import path from 'path';
 
 const CONFIG_PATH = '/workspace/group/kite-config.json';
+const IPC_CONTEXT_PATH = '/workspace/ipc/context.json';
+const IPC_MESSAGES_DIR = '/workspace/ipc/messages';
 const BASE_URL = 'https://kite.appsmith.com/api/v1';
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 120000;
+const STATUS_THROTTLE_MS = 8000;
 
 function loadSession() {
   if (!fs.existsSync(CONFIG_PATH)) {
@@ -61,6 +65,25 @@ function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function loadIpcContext() {
+  try {
+    return JSON.parse(fs.readFileSync(IPC_CONTEXT_PATH, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+function sendIpcStatus(chatJid, text) {
+  try {
+    fs.mkdirSync(IPC_MESSAGES_DIR, { recursive: true });
+    const filename = `kite-status-${Date.now()}-${Math.random().toString(36).slice(2, 6)}.json`;
+    const tempPath = path.join(IPC_MESSAGES_DIR, `${filename}.tmp`);
+    const finalPath = path.join(IPC_MESSAGES_DIR, filename);
+    fs.writeFileSync(tempPath, JSON.stringify({ type: 'message', chatJid, text }));
+    fs.renameSync(tempPath, finalPath);
+  } catch { /* best-effort */ }
+}
+
 // ── Commands ────────────────────────────────────────────────────
 
 async function listSites() {
@@ -90,23 +113,48 @@ async function pollResponse(argsJson) {
     process.exit(1);
   }
 
+  const ctx = loadIpcContext();
+  const chatJid = ctx?.chatJid;
   const afterDate = new Date(after);
   let elapsed = 0;
+  const seenNotifications = new Set();
+  let lastStatusAt = 0;
 
   while (elapsed < POLL_TIMEOUT_MS) {
-    const messages = await api('GET', `/threads/${thread_id}/messages`);
-    const candidates = (Array.isArray(messages) ? messages : [])
-      .filter(
-        (m) =>
-          m.role === 'assistant' &&
-          m.status === 'completed' &&
-          new Date(m.created_at) > afterDate,
-      );
+    const data = await api('GET', `/threads/${thread_id}/messages`);
+    const allMessages = Array.isArray(data) ? data : (data.messages || []);
+
+    const candidates = allMessages.filter(
+      (m) =>
+        m.type === 'conversation-update' &&
+        m.role !== 'user' &&
+        new Date(m.created_at) > afterDate &&
+        m.message && m.message.trim(),
+    );
 
     if (candidates.length > 0) {
       const latest = candidates[candidates.length - 1];
       console.log(JSON.stringify(latest, null, 2));
       return;
+    }
+
+    // Relay in-progress notifications as WhatsApp status updates
+    if (chatJid) {
+      const now = Date.now();
+      const newNotifications = allMessages.filter(
+        (m) =>
+          m.type === 'notification' &&
+          m.status === 'in_progress' &&
+          !seenNotifications.has(m.id),
+      );
+      for (const n of newNotifications) seenNotifications.add(n.id);
+
+      if (newNotifications.length > 0 && now - lastStatusAt >= STATUS_THROTTLE_MS) {
+        const latest = newNotifications[newNotifications.length - 1];
+        const label = latest.title || latest.action || 'Working';
+        sendIpcStatus(chatJid, `⏳ ${label}...`);
+        lastStatusAt = now;
+      }
     }
 
     await sleep(POLL_INTERVAL_MS);

@@ -472,6 +472,13 @@ async function main(): Promise<void> {
     containerInput = JSON.parse(stdinData);
     try { fs.unlinkSync('/tmp/input.json'); } catch { /* may not exist */ }
     log(`Received input for group: ${containerInput.groupFolder}`);
+
+    // Write context file so container scripts (e.g. kite-api.mjs) can send IPC messages
+    fs.writeFileSync('/workspace/ipc/context.json', JSON.stringify({
+      chatJid: containerInput.chatJid,
+      groupFolder: containerInput.groupFolder,
+      isMain: containerInput.isMain,
+    }));
   } catch (err) {
     writeOutput({
       status: 'error',
