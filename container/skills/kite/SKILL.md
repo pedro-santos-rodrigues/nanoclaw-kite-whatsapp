@@ -41,8 +41,9 @@ node $KITE list-sites
 # Send a message to the site's orchestrator
 node $KITE send-message '{"application_id":"APP_ID","thread_id":"THREAD_ID","user_message":"change the headline to Welcome"}'
 
-# Poll for the orchestrator's response (blocks up to 120s)
-node $KITE poll-response '{"thread_id":"THREAD_ID","after":"2026-03-11T10:00:00.000Z"}'
+# Poll for the orchestrator's response
+# Blocks up to 2 min normally, or up to 10 min for design generation (when application_id is included)
+node $KITE poll-response '{"thread_id":"THREAD_ID","after":"2026-03-11T10:00:00.000Z","application_id":"APP_ID"}'
 
 # Create a brand-new site
 node $KITE create-site
@@ -71,10 +72,10 @@ When the user wants to change something on their site:
 1. **Immediately** send a brief acknowledgement via `mcp__nanoclaw__send_message` so the user knows you're on it (e.g. "Let me check with Kite..." or "Sending that to Kite..."). Keep it honest — don't say "creating" or "done" before the orchestrator has responded.
 2. Record the current timestamp **right before** calling send-message (not after — the orchestrator may reply fast).
 3. Call `send-message` with the user's instruction forwarded as `user_message`.
-4. **Immediately** call `poll-response` with the thread_id and the timestamp from step 2 — do not do any other work between send-message and poll-response.
+4. **Immediately** call `poll-response` with the thread_id, the timestamp from step 2, and `application_id` — do not do any other work between send-message and poll-response.
 5. Relay the orchestrator's response to the user naturally.
 
-The orchestrator can take 10–60 seconds. The polling helper handles the wait automatically.
+The orchestrator can take 10–60 seconds for quick edits. For design generation, it can take 5–10 minutes — the polling helper automatically extends its wait time when `application_id` is included. Always include `application_id` in poll-response calls.
 
 If the orchestrator asks a follow-up question, relay it to the user conversationally and wait for their answer before sending the next message.
 
@@ -86,9 +87,9 @@ When the user says something like "create a new website for my food truck" or "b
 2. Call `create-site`. It returns `{application: {id}, thread: {id}}`.
 3. Update CLAUDE.md: set this as the active site, add it to the sites list.
 4. Forward the user's full description to the orchestrator via `send-message`.
-5. Poll for the response and relay it.
+5. Poll for the response with `application_id` included and relay it.
 6. The orchestrator will ask follow-up questions about the business (name, style, etc.) — relay them naturally and wait for the user's answers before continuing.
-6. When the orchestrator generates design options (3 iterations), present them with the direct Kite link so the user can preview visually:
+7. When the orchestrator generates design options (3 iterations), present them with the direct Kite link so the user can preview visually:
 
    ```
    Here are 3 design options for your site! You can preview and pick your favorite here:
@@ -98,7 +99,7 @@ When the user says something like "create a new website for my food truck" or "b
    ```
 
    Always use the URL format from the "IMPORTANT: URLs" section above. If the user replies with a number in chat, call `select-iteration` with `iter1`, `iter2`, or `iter3`.
-7. Continue the conversation with the orchestrator for any refinements.
+8. Continue the conversation with the orchestrator for any refinements.
 
 ### 5. Publishing
 

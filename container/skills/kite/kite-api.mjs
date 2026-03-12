@@ -18,10 +18,17 @@ import path from 'path';
 const CONFIG_PATH = '/workspace/group/kite-config.json';
 const IPC_CONTEXT_PATH = '/workspace/ipc/context.json';
 const IPC_MESSAGES_DIR = '/workspace/ipc/messages';
+const ACTIVE_SITE_PATH = '/tmp/kite-active-site.json';
 const BASE_URL = 'https://kite.appsmith.com/api/v1';
 const POLL_INTERVAL_MS = 3000;
 const POLL_TIMEOUT_MS = 120000;
 const STATUS_THROTTLE_MS = 8000;
+
+// Design generation can take 5–10 minutes. When we detect this is a
+// design-generation poll (application_id is available), extend the
+// timeout and use a gentler poll interval after the initial 2 minutes.
+const DESIGN_POLL_TIMEOUT_MS = 600000;
+const DESIGN_POLL_INTERVAL_MS = 10000;
 
 function loadSession() {
   if (!fs.existsSync(CONFIG_PATH)) {
@@ -39,7 +46,7 @@ function loadSession() {
   return config.session;
 }
 
-async function api(method, path, body) {
+async function api(method, apiPath, body) {
   const session = loadSession();
   const opts = {
     method,
@@ -50,7 +57,7 @@ async function api(method, path, body) {
   };
   if (body !== undefined) opts.body = JSON.stringify(body);
 
-  const res = await fetch(`${BASE_URL}${path}`, opts);
+  const res = await fetch(`${BASE_URL}${apiPath}`, opts);
 
   if (!res.ok) {
     const text = await res.text().catch(() => '');
@@ -61,6 +68,26 @@ async function api(method, path, body) {
   return res.json();
 }
 
+// Like api() but throws on error instead of process.exit(1).
+// Used during extended polling where transient errors should be retried.
+async function apiSafe(method, apiPath, body) {
+  const session = loadSession();
+  const opts = {
+    method,
+    headers: {
+      Cookie: `v2_session=${session}`,
+      'Content-Type': 'application/json',
+    },
+  };
+  if (body !== undefined) opts.body = JSON.stringify(body);
+  const res = await fetch(`${BASE_URL}${apiPath}`, opts);
+  if (!res.ok) {
+    const text = await res.text().catch(() => '');
+    throw new Error(`HTTP ${res.status}: ${text.slice(0, 200)}`);
+  }
+  return res.json();
+}
+
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -68,6 +95,20 @@ function sleep(ms) {
 function loadIpcContext() {
   try {
     return JSON.parse(fs.readFileSync(IPC_CONTEXT_PATH, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+function saveActiveSite(applicationId, threadId) {
+  try {
+    fs.writeFileSync(ACTIVE_SITE_PATH, JSON.stringify({ application_id: applicationId, thread_id: threadId }));
+  } catch { /* best-effort */ }
+}
+
+function loadActiveSite() {
+  try {
+    return JSON.parse(fs.readFileSync(ACTIVE_SITE_PATH, 'utf-8'));
   } catch {
     return null;
   }
@@ -97,6 +138,7 @@ async function sendMessage(argsJson) {
     console.error(JSON.stringify({ error: 'Required: application_id, thread_id, user_message' }));
     process.exit(1);
   }
+  saveActiveSite(application_id, thread_id);
   const data = await api('POST', '/chat/message', {
     application_id,
     thread_id,
@@ -121,7 +163,7 @@ function findLatestOrchestratorReply(allMessages) {
 }
 
 async function pollResponse(argsJson) {
-  const { thread_id, after } = JSON.parse(argsJson);
+  const { thread_id, after, application_id } = JSON.parse(argsJson);
   if (!thread_id || !after) {
     console.error(JSON.stringify({ error: 'Required: thread_id, after (ISO timestamp)' }));
     process.exit(1);
@@ -130,13 +172,32 @@ async function pollResponse(argsJson) {
   const ctx = loadIpcContext();
   const chatJid = ctx?.chatJid;
   const afterDate = new Date(after);
+
+  // When application_id is known (explicit or from last send-message),
+  // this is likely a design generation poll — allow up to 10 minutes.
+  const resolvedAppId = application_id || loadActiveSite()?.application_id;
+  const timeout = resolvedAppId ? DESIGN_POLL_TIMEOUT_MS : POLL_TIMEOUT_MS;
+
   let elapsed = 0;
   const seenNotifications = new Set();
   let lastStatusAt = 0;
 
-  while (elapsed < POLL_TIMEOUT_MS) {
-    const data = await api('GET', `/threads/${thread_id}/messages`);
-    const allMessages = Array.isArray(data) ? data : (data.messages || []);
+  while (elapsed < timeout) {
+    const inExtendedPhase = resolvedAppId && elapsed >= POLL_TIMEOUT_MS;
+
+    let allMessages;
+    try {
+      // During extended phase, use apiSafe to tolerate transient errors
+      const data = inExtendedPhase
+        ? await apiSafe('GET', `/threads/${thread_id}/messages`)
+        : await api('GET', `/threads/${thread_id}/messages`);
+      allMessages = Array.isArray(data) ? data : (data.messages || []);
+    } catch {
+      // Transient error during extended polling — retry on next interval
+      await sleep(DESIGN_POLL_INTERVAL_MS);
+      elapsed += DESIGN_POLL_INTERVAL_MS;
+      continue;
+    }
 
     // Primary: strict timestamp filter
     const candidates = allMessages.filter(
@@ -189,11 +250,12 @@ async function pollResponse(argsJson) {
       }
     }
 
-    await sleep(POLL_INTERVAL_MS);
-    elapsed += POLL_INTERVAL_MS;
+    const interval = inExtendedPhase ? DESIGN_POLL_INTERVAL_MS : POLL_INTERVAL_MS;
+    await sleep(interval);
+    elapsed += interval;
   }
 
-  console.error(JSON.stringify({ error: 'Polling timed out after 120 seconds' }));
+  console.error(JSON.stringify({ error: `Polling timed out after ${Math.round(timeout / 1000)} seconds` }));
   process.exit(1);
 }
 
